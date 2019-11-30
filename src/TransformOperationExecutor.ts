@@ -15,7 +15,7 @@ export class TransformOperationExecutor {
     // Private Properties
     // -------------------------------------------------------------------------
 
-    private recursionStack = new Set<Object>();
+    private recursionStack = new Map<string, any>();
 
     // -------------------------------------------------------------------------
     // Constructor
@@ -40,33 +40,38 @@ export class TransformOperationExecutor {
             const newValue = arrayType && this.transformationType === TransformationType.PLAIN_TO_CLASS ? instantiateArrayType(arrayType) : [];
             (value as any[]).forEach((subValue, index) => {
                 const subSource = source ? source[index] : undefined;
-                if (!this.options.enableCircularCheck || !this.isCircular(subValue)) {
-                    let realTargetType;
-                    if (typeof targetType !== "function" && targetType && targetType.options && targetType.options.discriminator && targetType.options.discriminator.property && targetType.options.discriminator.subTypes) {
-                        if (this.transformationType === TransformationType.PLAIN_TO_CLASS) {
-                            realTargetType = targetType.options.discriminator.subTypes.find((subType) => subType.name === subValue[(targetType as { options: TypeOptions }).options.discriminator.property]);
-                            const options: TypeHelpOptions = { newObject: newValue, object: subValue, property: undefined };
-                            const newType = targetType.typeFunction(options);
-                            realTargetType === undefined ? realTargetType = newType : realTargetType = realTargetType.value;
-                            if (!targetType.options.keepDiscriminatorProperty) delete subValue[targetType.options.discriminator.property];
-                        }
-                        if (this.transformationType === TransformationType.CLASS_TO_CLASS) {
-                            realTargetType = subValue.constructor;
-                        }
-                        if (this.transformationType === TransformationType.CLASS_TO_PLAIN) {
-                            subValue[targetType.options.discriminator.property] = targetType.options.discriminator.subTypes.find((subType) => subType.value === subValue.constructor).name;
-                        }
-                    } else {
-                        realTargetType = targetType;
+                let realTargetType;
+                if (typeof targetType !== "function" && targetType && targetType.options && targetType.options.discriminator && targetType.options.discriminator.property && targetType.options.discriminator.subTypes) {
+                    if (this.transformationType === TransformationType.PLAIN_TO_CLASS) {
+                        realTargetType = targetType.options.discriminator.subTypes.find((subType) => subType.name === subValue[(targetType as { options: TypeOptions }).options.discriminator.property]);
+                        const options: TypeHelpOptions = { newObject: newValue, object: subValue, property: undefined };
+                        const newType = targetType.typeFunction(options);
+                        realTargetType === undefined ? realTargetType = newType : realTargetType = realTargetType.value;
+                        if (!targetType.options.keepDiscriminatorProperty) delete subValue[targetType.options.discriminator.property];
                     }
-                    const value = this.transform(subSource, subValue, realTargetType, undefined, subValue instanceof Map, level + 1);
+                    if (this.transformationType === TransformationType.CLASS_TO_CLASS) {
+                        realTargetType = subValue.constructor;
+                    }
+                    if (this.transformationType === TransformationType.CLASS_TO_PLAIN) {
+                        subValue[targetType.options.discriminator.property] = targetType.options.discriminator.subTypes.find((subType) => subType.value === subValue.constructor).name;
+                    }
+                } else {
+                    realTargetType = targetType;
+                }
 
-                    if (newValue instanceof Set) {
-                        newValue.add(value);
-                    } else {
-                        newValue.push(value);
-                    }
-                } else if (this.transformationType === TransformationType.CLASS_TO_CLASS) {
+                let value = this.isCircular(subValue);
+                if (!value) {
+                    console.log("No circular", subValue);
+                    value = this.transform(subSource, subValue, realTargetType, undefined, subValue instanceof Map, level + 1) as any;
+                }
+
+                if (newValue instanceof Set) {
+                    newValue.add(value);
+                } else {
+                    newValue.push(value);
+                }
+
+                if (this.transformationType === TransformationType.CLASS_TO_CLASS) {
                     if (newValue instanceof Set) {
                         newValue.add(subValue);
                     } else {
@@ -111,7 +116,9 @@ export class TransformOperationExecutor {
 
             if (this.options.enableCircularCheck) {
                 // add transformed type to prevent circular references
-                this.recursionStack.add(value);
+                if (value && (value as any).uid) {
+                    this.recursionStack.set((value as any).uid, value);
+                }
             }
 
             const keys = this.getKeys((targetType as Function), value);
@@ -265,7 +272,9 @@ export class TransformOperationExecutor {
             }
 
             if (this.options.enableCircularCheck) {
-                this.recursionStack.delete(value);
+                if (value) {
+                    this.recursionStack.delete(value.uid);
+                }
             }
 
             return newValue;
@@ -311,7 +320,7 @@ export class TransformOperationExecutor {
 
     // preventing circular references
     private isCircular(object: Object) {
-        return this.recursionStack.has(object);
+        return this.recursionStack.get(object && (object as any).uid);
     }
 
     private getReflectedType(target: Function, propertyName: string) {
